@@ -1373,7 +1373,18 @@ ${answerHtml}
             return String(value).trim();
         };
         // Label A-E hanya penanda pilihan, bukan isi jawaban.
-        const isOptionLabelOnly = (value) => /^(?:[A-Ea-e]|[1-5])(?:[.)\-:]?)$/.test(String(value ?? '').trim());
+        // Termasuk pola keluaran AI yang keliru seperti "A 0", "B 1", "C. 0",
+        // atau "D-2". Pola tersebut bukan teks jawaban dan harus dibuang.
+        const isOptionLabelOnly = (value) => {
+            const v = String(value ?? '').trim();
+            return /^(?:[A-Ea-e]|[1-5])(?:[.)\-:]?)$/.test(v) ||
+                   /^[A-Ea-e]\s*[.)\-:]?\s*\d+(?:[.,]\d+)?$/.test(v);
+        };
+        const getOptionLabelIndex = (value) => {
+            const v = String(value ?? '').trim();
+            const m = v.match(/^([A-Ea-e])\s*[.)\-:]?\s*\d+(?:[.,]\d+)?$/);
+            return m ? m[1].toUpperCase().charCodeAt(0) - 65 : -1;
+        };
 
         const normalizeOptionList = (value) => {
             let source = value;
@@ -1388,7 +1399,7 @@ ${answerHtml}
             return source.flatMap(item => Array.isArray(item) ? item : [item])
                 .map(optionText)
                 .map(v => v.replace(/^\s*(?:[A-H]|[0-9]+)\s*[.)\-:]\s*/i, '').trim())
-                .filter(v => v && !/^\d+$/.test(v) && !isOptionLabelOnly(v));
+                .filter(v => v && !isOptionLabelOnly(v));
         };
         const getRawOptionList = (q) => {
             const candidates = [q?.options, q?.choices, q?.answers, q?.optionTexts, q?.answerOptions, q?.choiceTexts, q?.answerChoices, q?.alternatives];
@@ -1473,9 +1484,14 @@ ${answerHtml}
             }
 
             if (q.type === 'single') {
-                q.options = getRawOptionList(q).map(clean).filter(Boolean);
-                const correct = clean(q.correct);
-                if (correct && !q.options.includes(correct)) q.options.unshift(correct);
+                q.options = getRawOptionList(q).map(clean).filter(v => v && !isOptionLabelOnly(v));
+                let correct = clean(q.correct);
+                // Jika AI mengembalikan kunci seperti "A 0", "B 1", dst.,
+                // anggap hurufnya sebagai indeks opsi. Jangan pernah memasukkan
+                // string "A 0" tersebut kembali sebagai isi jawaban.
+                const badCorrectIndex = getOptionLabelIndex(correct);
+                if (badCorrectIndex >= 0 && q.options[badCorrectIndex]) correct = q.options[badCorrectIndex];
+                if (correct && !q.options.includes(correct) && !isOptionLabelOnly(correct)) q.options.unshift(correct);
                 const fillers = q.subject === 'Bahasa Inggris'
                     ? ['The text does not provide enough information to support this option.','This option contradicts the information in the text.','This option cannot be inferred from the text.','This option is unrelated to the main information in the text.','This option changes an important detail from the text.']
                     : q.subject === 'Bahasa Indonesia'
@@ -1487,11 +1503,12 @@ ${answerHtml}
                 for (const f of fillers) if (q.options.length < 5 && !q.options.includes(f)) q.options.push(f);
                 q.options = q.options.slice(0,5);
                 if (!q.options.length) q.options = fillers.slice(0,5);
-                q.correct = clean(q.correct);
-                if (!q.correct || !q.options.includes(q.correct)) q.correct = q.options[0];
+                q.correct = correct;
+                if (!q.correct || isOptionLabelOnly(q.correct) || !q.options.includes(q.correct)) q.correct = q.options[0];
                 if (!q.explanation || q.explanation === 'Pembahasan belum tersedia.') q.explanation = `Kunci jawaban adalah "${q.correct}" karena paling sesuai dengan informasi dan kondisi yang diberikan pada soal.`;
             } else if (q.type === 'complex') {
-                q.options = getRawOptionList(q).map(clean).filter(Boolean);
+                q.options = getRawOptionList(q).map(clean).filter(v => v && !isOptionLabelOnly(v));
+                const complexBadCorrectIndexes = Array.isArray(q.correct) ? q.correct.map(clean).map(getOptionLabelIndex) : [];
                 const fillers = q.subject === 'Bahasa Inggris'
                     ? ['This option is not supported by the text.','This statement contradicts the text.','This option cannot be inferred from the stimulus.','This option is supported by the information provided.','This option changes an important detail from the stimulus.']
                     : ['Pilihan ini tidak didukung oleh informasi pada soal.','Pernyataan ini tidak sesuai dengan kondisi yang diberikan.','Pilihan ini tidak dapat disimpulkan dari stimulus.','Pilihan ini sesuai dengan informasi yang diberikan.','Pilihan ini mengubah detail penting pada stimulus.'];
@@ -1500,7 +1517,11 @@ ${answerHtml}
                 for (const f of fillers) if (q.options.length < 4 && !q.options.includes(f)) q.options.push(f);
                 q.options = q.options.slice(0, Math.max(5,q.options.length));
                 if (q.options.length < 5) q.options = [...q.options,...fillers].filter((v,i,a)=>a.indexOf(v)===i).slice(0,5);
-                q.correct = Array.isArray(q.correct) ? q.correct.map(clean).filter(Boolean) : [];
+                q.correct = Array.isArray(q.correct) ? q.correct.map(clean).filter(v => v && !isOptionLabelOnly(v)) : [];
+                // Kunci MCMA yang berbentuk "A 0"/"B 1" dipetakan ke opsi berdasarkan hurufnya.
+                complexBadCorrectIndexes.forEach(idx => {
+                    if (idx >= 0 && q.options[idx] && !q.correct.includes(q.options[idx])) q.correct.push(q.options[idx]);
+                });
                 q.correct = q.correct.filter(v => q.options.includes(v));
                 for (const o of q.options) if (q.correct.length < 2 && !q.correct.includes(o)) q.correct.push(o);
                 q.correct = [...new Set(q.correct)].slice(0, q.options.length);
@@ -1556,7 +1577,7 @@ ${answerHtml}
             const issues = [...validateTKAQuestion(q)];
             const clean = x => String(x||'').trim();
             if (!clean(q.text)) issues.push('Teks soal kosong.');
-            if ((q.type === 'single' || q.type === 'complex') && Array.isArray(q.options) && q.options.some(isOptionLabelOnly)) issues.push('Ada pilihan jawaban yang hanya berupa label A/B/C/D/E; isi jawaban harus berupa teks lengkap.');
+            if ((q.type === 'single' || q.type === 'complex') && Array.isArray(q.options) && q.options.some(isOptionLabelOnly)) issues.push('Ada pilihan jawaban yang hanya berupa label atau pola label+angka seperti A 0/B 1; isi jawaban harus berupa teks lengkap.');
             if (q.type === 'single') {
                 if (q.options.length !== 5) issues.push('PG sederhana harus memiliki tepat 5 opsi (A-E).');
                 if (!q.options.includes(clean(q.correct))) issues.push('Kunci tidak sama persis dengan salah satu opsi.');
