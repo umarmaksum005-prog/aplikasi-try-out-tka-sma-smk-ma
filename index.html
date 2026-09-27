@@ -1372,6 +1372,9 @@ ${answerHtml}
             }
             return String(value).trim();
         };
+        // Label A-E hanya penanda pilihan, bukan isi jawaban.
+        const isOptionLabelOnly = (value) => /^(?:[A-Ea-e]|[1-5])(?:[.)\-:]?)$/.test(String(value ?? '').trim());
+
         const normalizeOptionList = (value) => {
             let source = value;
             // Toleransi untuk keluaran AI berupa JSON string atau objek bernomor.
@@ -1385,7 +1388,7 @@ ${answerHtml}
             return source.flatMap(item => Array.isArray(item) ? item : [item])
                 .map(optionText)
                 .map(v => v.replace(/^\s*(?:[A-H]|[0-9]+)\s*[.)\-:]\s*/i, '').trim())
-                .filter(v => v && !/^\d+$/.test(v));
+                .filter(v => v && !/^\d+$/.test(v) && !isOptionLabelOnly(v));
         };
         const getRawOptionList = (q) => {
             const candidates = [q?.options, q?.choices, q?.answers, q?.optionTexts, q?.answerOptions, q?.choiceTexts, q?.answerChoices, q?.alternatives];
@@ -1399,7 +1402,8 @@ ${answerHtml}
 
         const normalizeAIQuestion = (q, index = 0) => {
             const type = ['single','complex','statement'].includes(q.type) ? q.type : 'single';
-            const options = getRawOptionList(q);
+            const rawOptionCandidates = getRawOptionList(q);
+            const options = rawOptionCandidates.filter(v => !isOptionLabelOnly(v));
             const correct = Array.isArray(q.correct) ? q.correct.map(optionText).filter(Boolean) : optionText(q.correct);
             let statements = Array.isArray(q.statements) ? q.statements.map((x,i)=>({id:x.id || makeId()+i, text:optionText(x.text ?? x.statement ?? x.label), correct:Boolean(x.correct)})).filter(x=>x.text) : [];
             // Jika generator menaruh pernyataan pada options/choices, gunakan
@@ -1552,6 +1556,7 @@ ${answerHtml}
             const issues = [...validateTKAQuestion(q)];
             const clean = x => String(x||'').trim();
             if (!clean(q.text)) issues.push('Teks soal kosong.');
+            if ((q.type === 'single' || q.type === 'complex') && Array.isArray(q.options) && q.options.some(isOptionLabelOnly)) issues.push('Ada pilihan jawaban yang hanya berupa label A/B/C/D/E; isi jawaban harus berupa teks lengkap.');
             if (q.type === 'single') {
                 if (q.options.length !== 5) issues.push('PG sederhana harus memiliki tepat 5 opsi (A-E).');
                 if (!q.options.includes(clean(q.correct))) issues.push('Kunci tidak sama persis dengan salah satu opsi.');
@@ -1857,7 +1862,7 @@ SKEMA JSON WAJIB: setiap objek memiliki id,type,text,stimulus,options,correct,st
                     } else {
                         if(!apiKey.trim()) throw new Error('Masukkan API key AI terlebih dahulu.');
                         setTkaAiKey(apiKey.trim());
-                        const prompt=`Anda adalah pengembang asesmen TKA SMA/SMK Indonesia. Ikuti kerangka asesmen Perka BSKAP Nomor 045/H/AN/2025. Buat tepat ${totalCount} soal sebagai PAKET TRYOUT MENYELURUH untuk mata uji ${subject}. Blueprint per butir berikut adalah WAJIB diikuti: ${JSON.stringify(payload)}. Jangan mengubah jumlah atau urutan blueprint. Tryout harus mencakup seluruh elemen/sub-elemen kompetensi yang tercantum dan mendistribusikan cakupan secara seimbang sesuai blueprint. Setiap butir wajib memiliki metadata sesuai baris blueprint-nya. Untuk Matematika, cakupanSubelemen/coverage wajib diukur secara substantif; jangan hanya menyalin label. Untuk Bahasa Indonesia, gunakan bacaan yang relevan dengan kompetensi/subkompetensi. Untuk Bahasa Inggris, gunakan teks bahasa Inggris sesuai jenis teks, konteks komunikasi, dan kompleksitas A2/B1 pada blueprint dan hindari pertanyaan yang jawabannya sekadar menyalin satu kalimat. Variasikan konteks, angka, strategi, bentuk penalaran, dan pengecoh. PG sederhana tepat satu kunci dan TEPAT 5 opsi A-E; PGK MCMA memiliki minimal dua kunci dan TEPAT 5 opsi A-E; PGK kategori menggunakan minimal 3 pernyataan dan pasangan respons kontekstual yang disimpan pada statementMode, misalnya tf=Benar/Salah, sa=Sesuai/Tidak Sesuai, tp=Tepat/Tidak Tepat, td=Tepat Dilakukan/Tidak Tepat Dilakukan, cr=Conservation/Relaxation, ef=Efektif/Tidak Efektif, atau ya/ps sesuai konteks. Jangan memakai Benar/Salah secara default jika konteks menuntut pasangan kategori lain. Untuk soal grup, gunakan stimulus bersama yang kaya dan soal saling terkait. Jika visual benar-benar diperlukan, buat SVG mandiri pada imageSvg. Jangan gunakan URL gambar eksternal. Kembalikan HANYA JSON valid berupa array objek. Skema setiap objek: id,type,text,stimulus,options,correct,statements,explanation,subject,element,subelement,competency,subcompetency,cakupanSubelemen,coverage,cognitiveLevel,thinkingProcess,itemType,imageSvg,imageAlt,imageRequired,imageDescription,optionImageSvgs. Lakukan pemeriksaan internal atas kunci, angka, konsistensi stimulus, level kognitif, duplikasi opsi, dan kesesuaian blueprint.`;
+                        const prompt=`Anda adalah pengembang asesmen TKA SMA/SMK Indonesia. Ikuti kerangka asesmen Perka BSKAP Nomor 045/H/AN/2025. Buat tepat ${totalCount} soal sebagai PAKET TRYOUT MENYELURUH untuk mata uji ${subject}. Blueprint per butir berikut adalah WAJIB diikuti: ${JSON.stringify(payload)}. Jangan mengubah jumlah atau urutan blueprint. Tryout harus mencakup seluruh elemen/sub-elemen kompetensi yang tercantum dan mendistribusikan cakupan secara seimbang sesuai blueprint. Setiap butir wajib memiliki metadata sesuai baris blueprint-nya. Untuk Matematika, cakupanSubelemen/coverage wajib diukur secara substantif; jangan hanya menyalin label. Untuk Bahasa Indonesia, gunakan bacaan yang relevan dengan kompetensi/subkompetensi. Untuk Bahasa Inggris, gunakan teks bahasa Inggris sesuai jenis teks, konteks komunikasi, dan kompleksitas A2/B1 pada blueprint dan hindari pertanyaan yang jawabannya sekadar menyalin satu kalimat. Variasikan konteks, angka, strategi, bentuk penalaran, dan pengecoh. PG sederhana tepat satu kunci dan TEPAT 5 opsi A-E, setiap opsi wajib berupa teks jawaban lengkap dan tidak boleh hanya berisi label A, B, C, D, atau E; PGK MCMA memiliki minimal dua kunci dan TEPAT 5 opsi A-E, setiap opsi wajib berupa teks jawaban lengkap dan tidak boleh hanya berisi label A-E; PGK kategori menggunakan minimal 3 pernyataan dan pasangan respons kontekstual yang disimpan pada statementMode, misalnya tf=Benar/Salah, sa=Sesuai/Tidak Sesuai, tp=Tepat/Tidak Tepat, td=Tepat Dilakukan/Tidak Tepat Dilakukan, cr=Conservation/Relaxation, ef=Efektif/Tidak Efektif, atau ya/ps sesuai konteks. Jangan memakai Benar/Salah secara default jika konteks menuntut pasangan kategori lain. Untuk soal grup, gunakan stimulus bersama yang kaya dan soal saling terkait. Jika visual benar-benar diperlukan, buat SVG mandiri pada imageSvg. Jangan gunakan URL gambar eksternal. Kembalikan HANYA JSON valid berupa array objek. Skema setiap objek: id,type,text,stimulus,options,correct,statements,explanation,subject,element,subelement,competency,subcompetency,cakupanSubelemen,coverage,cognitiveLevel,thinkingProcess,itemType,imageSvg,imageAlt,imageRequired,imageDescription,optionImageSvgs. Lakukan pemeriksaan internal atas kunci, angka, konsistensi stimulus, level kognitif, duplikasi opsi, dan kesesuaian blueprint.`;
                         // Fallback model otomatis untuk GENERATOR TRYOUT TKA.
                         // Urutan: model utama -> Flash -> Flash-Lite.
                         const aiModels = [
@@ -1934,7 +1939,7 @@ SKEMA JSON WAJIB: setiap objek memiliki id,type,text,stimulus,options,correct,st
                     const repaired=[];
                     for(let n=0;n<invalid.length;n++){
                         const item=invalid[n], b=blueprint[item.index];
-                        const prompt=`Anda adalah pengembang asesmen TKA SMA/SMK Indonesia. Ikuti kerangka asesmen Perka BSKAP Nomor 045/H/AN/2025. REGENERASI hanya satu butir soal tryout yang gagal validasi. Pertahankan blueprint berikut secara tepat dan jangan mengubah metadata: ${JSON.stringify(b)}. Soal lama yang bermasalah: ${JSON.stringify(item.q)}. Masalah validator: ${JSON.stringify(item.issues)}. Buat soal baru yang benar-benar berbeda dari soal lama tetapi tetap mengukur cakupan dan kompetensi blueprint. Periksa kembali kunci jawaban, opsi, pernyataan, perhitungan, stimulus, level kognitif, dan kesesuaian cakupan. Untuk Matematika, cakupan wajib diukur substantif. PG sederhana tepat satu kunci dan TEPAT 5 opsi A-E; PGK MCMA memiliki minimal dua kunci dan TEPAT 5 opsi A-E; PGK kategori menggunakan minimal 3 pernyataan dan statementMode yang sesuai konteks, misalnya Benar/Salah, Sesuai/Tidak Sesuai, Tepat/Tidak Tepat, Tepat Dilakukan/Tidak Tepat Dilakukan, Conservation/Relaxation, atau Efektif/Tidak Efektif. Kembalikan HANYA satu objek JSON dengan skema: id,type,text,stimulus,options,correct,statements,explanation,subject,element,subelement,competency,subcompetency,cakupanSubelemen,coverage,cognitiveLevel,thinkingProcess,itemType,imageSvg,imageAlt,imageRequired,imageDescription,optionImageSvgs.`;
+                        const prompt=`Anda adalah pengembang asesmen TKA SMA/SMK Indonesia. Ikuti kerangka asesmen Perka BSKAP Nomor 045/H/AN/2025. REGENERASI hanya satu butir soal tryout yang gagal validasi. Pertahankan blueprint berikut secara tepat dan jangan mengubah metadata: ${JSON.stringify(b)}. Soal lama yang bermasalah: ${JSON.stringify(item.q)}. Masalah validator: ${JSON.stringify(item.issues)}. Buat soal baru yang benar-benar berbeda dari soal lama tetapi tetap mengukur cakupan dan kompetensi blueprint. Periksa kembali kunci jawaban, opsi, pernyataan, perhitungan, stimulus, level kognitif, dan kesesuaian cakupan. Untuk Matematika, cakupan wajib diukur substantif. PG sederhana tepat satu kunci dan TEPAT 5 opsi A-E, setiap opsi wajib berupa teks jawaban lengkap dan tidak boleh hanya berisi label A, B, C, D, atau E; PGK MCMA memiliki minimal dua kunci dan TEPAT 5 opsi A-E, setiap opsi wajib berupa teks jawaban lengkap dan tidak boleh hanya berisi label A-E; PGK kategori menggunakan minimal 3 pernyataan dan statementMode yang sesuai konteks, misalnya Benar/Salah, Sesuai/Tidak Sesuai, Tepat/Tidak Tepat, Tepat Dilakukan/Tidak Tepat Dilakukan, Conservation/Relaxation, atau Efektif/Tidak Efektif. Kembalikan HANYA satu objek JSON dengan skema: id,type,text,stimulus,options,correct,statements,explanation,subject,element,subelement,competency,subcompetency,cakupanSubelemen,coverage,cognitiveLevel,thinkingProcess,itemType,imageSvg,imageAlt,imageRequired,imageDescription,optionImageSvgs.`;
                         // Regenerasi memakai fallback model otomatis agar tidak berhenti hanya karena model utama sedang padat.
                         // Urutan: model utama -> model Flash alternatif -> Flash-Lite alternatif.
                         const models=['gemini-3.6-flash','gemini-3.5-flash','gemini-3.1-flash-lite'];
